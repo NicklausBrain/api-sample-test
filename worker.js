@@ -104,6 +104,7 @@ async function processHubSpotPaginatedData(lastPulledDate, hubspotApiCallback) {
     );
 
     offsetObject.after = parseInt(searchResult.paging?.next?.after);
+    const data = searchResult.results || [];
 
     if (!offsetObject?.after) {
       hasMore = false;
@@ -125,6 +126,11 @@ async function processHubSpotPaginatedData(lastPulledDate, hubspotApiCallback) {
 const processCompanies = async (account, q) => {
   const lastPulledDate = new Date(account.lastPulledDates.companies);
   const now = new Date();
+
+  console.log("Companies date range:", {
+    from: lastPulledDate.toISOString(),
+    to: now.toISOString(),
+  });
 
   await processHubSpotPaginatedData(
     lastPulledDate,
@@ -197,7 +203,6 @@ const processCompanies = async (account, q) => {
   );
 
   account.lastPulledDates.companies = now;
-  //await saveDomain(domain);
 
   return true;
 };
@@ -208,6 +213,11 @@ const processCompanies = async (account, q) => {
 const processContacts = async (account, q) => {
   const lastPulledDate = new Date(account.lastPulledDates.contacts);
   const now = new Date();
+
+  console.log("Contacts date range:", {
+    from: lastPulledDate.toISOString(),
+    to: now.toISOString(),
+  });
 
   await processHubSpotPaginatedData(
     lastPulledDate,
@@ -325,6 +335,132 @@ const processContacts = async (account, q) => {
   return true;
 };
 
+/**
+ * Get recently modified meetings as 100 meetings per page
+ */
+const processMeetings = async (account, q) => {
+  const lastPulledDate = new Date(account.lastPulledDates.meetings);
+  const now = new Date();
+
+  console.log("Meeting date range:", {
+    from: lastPulledDate.toISOString(),
+    to: now.toISOString(),
+  });
+
+  await processHubSpotPaginatedData(
+    lastPulledDate,
+    async (lastModifiedDate, after) => {
+      const lastModifiedDateFilter = generateLastModifiedDateFilter(
+        lastModifiedDate,
+        now,
+        "hs_lastmodifieddate"
+      );
+      const searchObject = {
+        filterGroups: [lastModifiedDateFilter],
+        sorts: [
+          { propertyName: "hs_lastmodifieddate", direction: "ASCENDING" },
+        ],
+        properties: [
+          "hs_meeting_title",
+          "hs_meeting_body",
+          "hs_meeting_start_time",
+          "hs_meeting_end_time",
+          "hs_meeting_outcome",
+        ],
+        limit: PAGE_SIZE,
+        after: after,
+      };
+
+      const searchResult = await requestHubspotWithRetry(account, async () => {
+        console.log("try meetings search");
+        return await hubspotClient.apiRequest({
+          method: "post",
+          path: "/crm/v3/objects/meetings/search",
+          body: searchObject,
+        });
+      });
+
+      if (!searchResult)
+        throw new Error("Failed to fetch meetings for the 4th time. Aborting.");
+
+      const meetings = searchResult.results || [];
+      console.log(`Fetched ${meetings.length} meetings`);
+
+      // Process each meeting to get associated contacts
+      for (const meeting of meetings) {
+        // Get contact associations for this meeting
+        const contactAssociationsResult = await requestHubspotWithRetry(
+          account,
+          async () => {
+            console.log(`Get contact associations for meeting ${meeting.id}`);
+            return await hubspotClient.apiRequest({
+              method: "get",
+              path: `/crm/v3/objects/meetings/${meeting.id}/associations/contacts`,
+            });
+          }
+        );
+
+        const contactAssociations = contactAssociationsResult?.results || [];
+
+        if (contactAssociations.length === 0) continue; // Skip meetings with no contacts
+
+        // Get details for associated contacts to get their emails
+        const contactIds = contactAssociations.map(
+          (association) => association.id
+        );
+
+        const contactsDetailsResult = await requestHubspotWithRetry(
+          account,
+          async () => {
+            console.log(`Get contact details for meeting ${meeting.id}`);
+            return await hubspotClient.apiRequest({
+              method: "post",
+              path: "/crm/v3/objects/contacts/batch/read",
+              body: {
+                properties: ["email"],
+                inputs: contactIds.map((id) => ({ id })),
+              },
+            });
+          }
+        );
+
+        const contactsDetails = contactsDetailsResult?.results || [];
+
+        // Create an action for each contact that attended the meeting
+        for (const contact of contactsDetails) {
+          if (!contact.properties || !contact.properties.email) continue;
+
+          const isCreated = new Date(meeting.createdAt) > lastPulledDate;
+
+          const meetingProperties = {
+            meeting_id: meeting.id,
+            meeting_title: meeting.properties.hs_meeting_title,
+            meeting_start_time: meeting.properties.hs_meeting_start_time,
+            meeting_end_time: meeting.properties.hs_meeting_end_time,
+            meeting_outcome: meeting.properties.hs_meeting_outcome,
+          };
+
+          q.push({
+            actionName: isCreated ? "Meeting Created" : "Meeting Updated",
+            actionDate: new Date(
+              isCreated ? meeting.createdAt : meeting.updatedAt
+            ),
+            identity: contact.properties.email,
+            meetingProperties: filterNullValuesFromObject(meetingProperties),
+            includeInAnalytics: 0,
+          });
+        }
+      }
+
+      return searchResult;
+    }
+  );
+
+  account.lastPulledDates.meetings = now;
+
+  return true;
+};
+
 const createQueue = (domain, actions) =>
   queue(async (action, callback) => {
     actions.push(action);
@@ -396,6 +532,18 @@ const pullDataFromHubspot = async () => {
       console.log(err, {
         apiKey: domain.apiKey,
         metadata: { operation: "processCompanies", hubId: account.hubId },
+      });
+    }
+
+    try {
+      console.log("start process meetings");
+      await processMeetings(account, q);
+      await saveDomain(domain);
+      console.log("process meetings - done");
+    } catch (err) {
+      console.log(err, {
+        apiKey: domain.apiKey,
+        metadata: { operation: "processMeetings", hubId: account.hubId },
       });
     }
 
