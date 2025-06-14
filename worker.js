@@ -6,7 +6,10 @@ const { filterNullValuesFromObject, goal } = require("./utils");
 const Domain = require("./Domain");
 
 const hubspotClient = new hubspot.Client({ accessToken: "" });
-const propertyPrefix = "hubspot__";
+
+const PAGE_SIZE = 100;
+
+const propertyPrefix = "hubspot__"; // todo: not used
 let expirationDate;
 
 const generateLastModifiedDateFilter = (date, nowDate, propertyName) => {
@@ -33,12 +36,10 @@ const saveDomain = async (domain) => {
 /**
  * Get access token from HubSpot
  */
-const refreshHubspotAccessToken = async (domain, hubId, tryCount) => {
+const refreshHubspotAccessToken = async (account, tryCount) => {
   // todo: tryCount is never used
   const { HUBSPOT_CID, HUBSPOT_CS } = process.env;
-  const account = domain.integrations.hubspot.accounts.find(
-    (account) => account.hubId === hubId
-  );
+
   const { accessToken, refreshToken } = account;
 
   return hubspotClient.oauth.tokensApi
@@ -67,7 +68,7 @@ const refreshHubspotAccessToken = async (domain, hubId, tryCount) => {
     });
 };
 
-async function requestHubspotWithRetry(hubspotApiCallback) {
+async function requestHubspotWithRetry(account, hubspotApiCallback) {
   let tryCount = 0;
   while (tryCount <= 4) {
     try {
@@ -76,8 +77,7 @@ async function requestHubspotWithRetry(hubspotApiCallback) {
       console.error("requestHubspotWithRetry - fail", { err });
       tryCount++;
 
-      if (new Date() > expirationDate)
-        await refreshHubspotAccessToken(domain, hubId);
+      if (new Date() > expirationDate) await refreshHubspotAccessToken(account);
 
       await new Promise((resolve, reject) =>
         setTimeout(resolve, 5000 * Math.pow(2, tryCount))
@@ -122,13 +122,9 @@ async function processHubSpotPaginatedData(lastPulledDate, hubspotApiCallback) {
 /**
  * Get recently modified companies as 100 companies per page
  */
-const processCompanies = async (domain, hubId, q) => {
-  const account = domain.integrations.hubspot.accounts.find(
-    (account) => account.hubId === hubId
-  );
+const processCompanies = async (account, q) => {
   const lastPulledDate = new Date(account.lastPulledDates.companies);
   const now = new Date();
-  const limit = 100;
 
   await processHubSpotPaginatedData(
     lastPulledDate,
@@ -153,11 +149,11 @@ const processCompanies = async (domain, hubId, q) => {
           "numberofemployees",
           "hs_lead_status",
         ],
-        limit,
+        limit: PAGE_SIZE,
         after: after,
       };
 
-      const searchResult = await requestHubspotWithRetry(async () => {
+      const searchResult = await requestHubspotWithRetry(account, async () => {
         console.log("try companies.searchApi.doSearch");
         return await hubspotClient.crm.companies.searchApi.doSearch(
           searchObject
@@ -201,7 +197,7 @@ const processCompanies = async (domain, hubId, q) => {
   );
 
   account.lastPulledDates.companies = now;
-  await saveDomain(domain);
+  //await saveDomain(domain);
 
   return true;
 };
@@ -209,13 +205,9 @@ const processCompanies = async (domain, hubId, q) => {
 /**
  * Get recently modified contacts as 100 contacts per page
  */
-const processContacts = async (domain, hubId, q) => {
-  const account = domain.integrations.hubspot.accounts.find(
-    (account) => account.hubId === hubId
-  );
+const processContacts = async (account, q) => {
   const lastPulledDate = new Date(account.lastPulledDates.contacts);
   const now = new Date();
-  const limit = 100;
 
   await processHubSpotPaginatedData(
     lastPulledDate,
@@ -238,11 +230,11 @@ const processContacts = async (domain, hubId, q) => {
           "hs_analytics_source",
           "hs_latest_source",
         ],
-        limit,
+        limit: PAGE_SIZE,
         after: after,
       };
 
-      const searchResult = await requestHubspotWithRetry(async () => {
+      const searchResult = await requestHubspotWithRetry(account, async () => {
         console.log("try contacts.searchApi.doSearch");
         return await hubspotClient.crm.contacts.searchApi.doSearch(
           searchObject
@@ -329,7 +321,6 @@ const processContacts = async (domain, hubId, q) => {
   );
 
   account.lastPulledDates.contacts = now;
-  await saveDomain(domain);
 
   return true;
 };
@@ -353,6 +344,7 @@ const createQueue = (domain, actions) =>
     callback();
   }, 100000000);
 
+// todo: domain is not used
 const drainQueue = async (domain, actions, q) => {
   if (q.length() > 0) await q.drain();
 
@@ -372,7 +364,7 @@ const pullDataFromHubspot = async () => {
     console.log("start processing account");
 
     try {
-      await refreshHubspotAccessToken(domain, account.hubId);
+      await refreshHubspotAccessToken(account);
     } catch (err) {
       console.log(err, {
         apiKey: domain.apiKey,
@@ -385,7 +377,8 @@ const pullDataFromHubspot = async () => {
 
     try {
       console.log("start process contacts");
-      await processContacts(domain, account.hubId, q);
+      await processContacts(account, q);
+      await saveDomain(domain); // todo: mb can be done after all processing
       console.log("process contacts - done");
     } catch (err) {
       console.log(err, {
@@ -396,7 +389,8 @@ const pullDataFromHubspot = async () => {
 
     try {
       console.log("start process companies");
-      await processCompanies(domain, account.hubId, q);
+      await processCompanies(account, q);
+      await saveDomain(domain); // todo: mb can be done after all processing
       console.log("process companies - done");
     } catch (err) {
       console.log(err, {
@@ -407,6 +401,7 @@ const pullDataFromHubspot = async () => {
 
     try {
       console.log("start drain queue");
+      // todo: domain is not used here - who knows why?
       await drainQueue(domain, actions, q);
       console.log("drain queue - done");
     } catch (err) {
