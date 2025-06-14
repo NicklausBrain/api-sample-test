@@ -9,11 +9,7 @@ const hubspotClient = new hubspot.Client({ accessToken: "" });
 const propertyPrefix = "hubspot__";
 let expirationDate;
 
-const generateLastModifiedDateFilter = (
-  date,
-  nowDate,
-  propertyName = "hs_lastmodifieddate"
-) => {
+const generateLastModifiedDateFilter = (date, nowDate, propertyName) => {
   const lastModifiedDateFilter = date
     ? {
         filters: [
@@ -43,8 +39,6 @@ const refreshAccessToken = async (domain, hubId, tryCount) => {
     (account) => account.hubId === hubId
   );
   const { accessToken, refreshToken } = account;
-
-  //console.log("refreshing access token", { account });
 
   return hubspotClient.oauth.tokensApi
     .createToken(
@@ -90,7 +84,8 @@ const processCompanies = async (domain, hubId, q) => {
     const lastModifiedDate = offsetObject.lastModifiedDate || lastPulledDate;
     const lastModifiedDateFilter = generateLastModifiedDateFilter(
       lastModifiedDate,
-      now
+      now,
+      "hs_lastmodifieddate"
     );
     const searchObject = {
       filterGroups: [lastModifiedDateFilter],
@@ -109,7 +104,7 @@ const processCompanies = async (domain, hubId, q) => {
       after: offsetObject.after,
     };
 
-    let searchResult = {};
+    let searchResult = null;
 
     let tryCount = 0;
     while (tryCount <= 4) {
@@ -118,7 +113,6 @@ const processCompanies = async (domain, hubId, q) => {
         searchResult = await hubspotClient.crm.companies.searchApi.doSearch(
           searchObject
         );
-        console.log(searchObject);
         break;
       } catch (err) {
         console.error("processCompanies doSearch - fail", searchObject);
@@ -219,9 +213,7 @@ const processContacts = async (domain, hubId, q) => {
       after: offsetObject.after,
     };
 
-    // console.log("searchObject", JSON.stringify(searchObject));
-
-    let searchResult = {};
+    let searchResult = null;
 
     let tryCount = 0;
     while (tryCount <= 4) {
