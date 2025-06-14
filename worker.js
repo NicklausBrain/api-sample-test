@@ -34,6 +34,7 @@ const saveDomain = async (domain) => {
  * Get access token from HubSpot
  */
 const refreshHubspotAccessToken = async (domain, hubId, tryCount) => {
+  // todo: tryCount is never used
   const { HUBSPOT_CID, HUBSPOT_CS } = process.env;
   const account = domain.integrations.hubspot.accounts.find(
     (account) => account.hubId === hubId
@@ -131,8 +132,8 @@ const processCompanies = async (domain, hubId, q) => {
     if (!searchResult)
       throw new Error("Failed to fetch companies for the 4th time. Aborting.");
 
-    const data = searchResult?.results || [];
-    offsetObject.after = parseInt(searchResult?.paging?.next?.after);
+    const data = searchResult.results || [];
+    offsetObject.after = parseInt(searchResult.paging?.next?.after);
 
     console.log("fetch company batch");
 
