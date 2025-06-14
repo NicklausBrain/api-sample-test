@@ -393,19 +393,22 @@ const processMeetings = async (account, q) => {
         const contactAssociationsResult = await requestHubspotWithRetry(
           account,
           async () => {
-            console.log(`Get contact associations for meeting ${meeting.id}`);
-            return await hubspotClient.apiRequest({
-              method: "get",
-              path: `/crm/v3/objects/meetings/${meeting.id}/associations/contacts`,
-            });
+            return await hubspotClient.crm.objects.associationsApi.getAll(
+              "meetings",
+              meeting.id,
+              "contacts"
+            );
           }
         );
 
-        console.log("contactAssociationsResult", { contactAssociationsResult });
-
         const contactAssociations = contactAssociationsResult?.results || [];
 
-        if (contactAssociations.length === 0) continue; // Skip meetings with no contacts
+        if (contactAssociations.length === 0) {
+          console.log("Skip meetings with no contacts");
+          continue; // Skip meetings with no contacts
+        } else {
+          console.log("contactAssociations", { contactAssociations });
+        }
 
         // Get details for associated contacts to get their emails
         const contactIds = contactAssociations.map(
