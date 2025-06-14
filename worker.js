@@ -114,11 +114,14 @@ const processCompanies = async (domain, hubId, q) => {
     let tryCount = 0;
     while (tryCount <= 4) {
       try {
+        console.log("processCompanies doSearch");
         searchResult = await hubspotClient.crm.companies.searchApi.doSearch(
           searchObject
         );
+        console.log(searchObject);
         break;
       } catch (err) {
+        console.error("processCompanies doSearch - fail", searchObject);
         tryCount++;
 
         if (new Date() > expirationDate)
@@ -221,11 +224,13 @@ const processContacts = async (domain, hubId, q) => {
     let tryCount = 0;
     while (tryCount <= 4) {
       try {
+        console.log("processContacts doSearch");
         searchResult = await hubspotClient.crm.contacts.searchApi.doSearch(
           searchObject
         );
         break;
       } catch (err) {
+        console.error("processContacts doSearch - fail", { err });
         tryCount++;
 
         if (new Date() > expirationDate)
@@ -378,8 +383,9 @@ const pullDataFromHubspot = async () => {
     const q = createQueue(domain, actions);
 
     try {
+      console.log("start process contacts");
       await processContacts(domain, account.hubId, q);
-      console.log("process contacts");
+      console.log("process contacts - done");
     } catch (err) {
       console.log(err, {
         apiKey: domain.apiKey,
@@ -388,8 +394,9 @@ const pullDataFromHubspot = async () => {
     }
 
     try {
+      console.log("start process companies");
       await processCompanies(domain, account.hubId, q);
-      console.log("process companies");
+      console.log("process companies - done");
     } catch (err) {
       console.log(err, {
         apiKey: domain.apiKey,
@@ -398,8 +405,9 @@ const pullDataFromHubspot = async () => {
     }
 
     try {
+      console.log("start drain queue");
       await drainQueue(domain, actions, q);
-      console.log("drain queue");
+      console.log("drain queue - done");
     } catch (err) {
       console.log(err, {
         apiKey: domain.apiKey,
