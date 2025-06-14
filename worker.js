@@ -33,7 +33,7 @@ const saveDomain = async (domain) => {
 /**
  * Get access token from HubSpot
  */
-const refreshAccessToken = async (domain, hubId, tryCount) => {
+const refreshHubspotAccessToken = async (domain, hubId, tryCount) => {
   const { HUBSPOT_CID, HUBSPOT_CS } = process.env;
   const account = domain.integrations.hubspot.accounts.find(
     (account) => account.hubId === hubId
@@ -65,6 +65,25 @@ const refreshAccessToken = async (domain, hubId, tryCount) => {
       return true;
     });
 };
+
+async function requestHubspotWithRetry(hubspotApiCallback) {
+  let tryCount = 0;
+  while (tryCount <= 4) {
+    try {
+      return await hubspotApiCallback();
+    } catch (err) {
+      console.error("requestHubspotWithRetry - fail", { err });
+      tryCount++;
+
+      if (new Date() > expirationDate)
+        await refreshHubspotAccessToken(domain, hubId);
+
+      await new Promise((resolve, reject) =>
+        setTimeout(resolve, 5000 * Math.pow(2, tryCount))
+      );
+    }
+  }
+}
 
 /**
  * Get recently modified companies as 100 companies per page
@@ -104,28 +123,10 @@ const processCompanies = async (domain, hubId, q) => {
       after: offsetObject.after,
     };
 
-    let searchResult = null;
-
-    let tryCount = 0;
-    while (tryCount <= 4) {
-      try {
-        console.log("processCompanies doSearch");
-        searchResult = await hubspotClient.crm.companies.searchApi.doSearch(
-          searchObject
-        );
-        break;
-      } catch (err) {
-        console.error("processCompanies doSearch - fail", searchObject);
-        tryCount++;
-
-        if (new Date() > expirationDate)
-          await refreshAccessToken(domain, hubId);
-
-        await new Promise((resolve, reject) =>
-          setTimeout(resolve, 5000 * Math.pow(2, tryCount))
-        );
-      }
-    }
+    const searchResult = await requestHubspotWithRetry(async () => {
+      console.log("try companies.searchApi.doSearch");
+      return await hubspotClient.crm.companies.searchApi.doSearch(searchObject);
+    });
 
     if (!searchResult)
       throw new Error("Failed to fetch companies for the 4th time. Aborting.");
@@ -213,28 +214,10 @@ const processContacts = async (domain, hubId, q) => {
       after: offsetObject.after,
     };
 
-    let searchResult = null;
-
-    let tryCount = 0;
-    while (tryCount <= 4) {
-      try {
-        console.log("processContacts doSearch");
-        searchResult = await hubspotClient.crm.contacts.searchApi.doSearch(
-          searchObject
-        );
-        break;
-      } catch (err) {
-        console.error("processContacts doSearch - fail", { err });
-        tryCount++;
-
-        if (new Date() > expirationDate)
-          await refreshAccessToken(domain, hubId);
-
-        await new Promise((resolve, reject) =>
-          setTimeout(resolve, 5000 * Math.pow(2, tryCount))
-        );
-      }
-    }
+    const searchResult = await requestHubspotWithRetry(async () => {
+      console.log("try contacts.searchApi.doSearch");
+      return await hubspotClient.crm.contacts.searchApi.doSearch(searchObject);
+    });
 
     if (!searchResult)
       throw new Error("Failed to fetch contacts for the 4th time. Aborting.");
@@ -365,7 +348,7 @@ const pullDataFromHubspot = async () => {
     console.log("start processing account");
 
     try {
-      await refreshAccessToken(domain, account.hubId);
+      await refreshHubspotAccessToken(domain, account.hubId);
     } catch (err) {
       console.log(err, {
         apiKey: domain.apiKey,
