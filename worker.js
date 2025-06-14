@@ -86,6 +86,39 @@ async function requestHubspotWithRetry(hubspotApiCallback) {
   }
 }
 
+async function processHubSpotPaginatedData(lastPulledDate, hubspotApiCallback) {
+  let hasMore = true;
+  const offsetObject = {};
+
+  while (hasMore) {
+    const lastModifiedDate = offsetObject.lastModifiedDate || lastPulledDate;
+
+    console.log("processHubSpotPaginatedData - try", {
+      offsetObject,
+      lastModifiedDate,
+    });
+
+    const searchResult = await hubspotApiCallback(
+      lastModifiedDate,
+      offsetObject.after
+    );
+
+    offsetObject.after = parseInt(searchResult.paging?.next?.after);
+
+    if (!offsetObject?.after) {
+      hasMore = false;
+      console.log("processHubSpotPaginatedData - end", { offsetObject });
+      break;
+    } else if (offsetObject?.after >= 9900) {
+      offsetObject.after = 0;
+      offsetObject.lastModifiedDate = new Date(
+        data[data.length - 1].updatedAt
+      ).valueOf();
+      console.log("processHubSpotPaginatedData - more", { offsetObject });
+    }
+  }
+}
+
 /**
  * Get recently modified companies as 100 companies per page
  */
@@ -95,81 +128,77 @@ const processCompanies = async (domain, hubId, q) => {
   );
   const lastPulledDate = new Date(account.lastPulledDates.companies);
   const now = new Date();
-
-  let hasMore = true;
-  const offsetObject = {};
   const limit = 100;
 
-  while (hasMore) {
-    const lastModifiedDate = offsetObject.lastModifiedDate || lastPulledDate;
-    const lastModifiedDateFilter = generateLastModifiedDateFilter(
-      lastModifiedDate,
-      now,
-      "hs_lastmodifieddate"
-    );
-    const searchObject = {
-      filterGroups: [lastModifiedDateFilter],
-      sorts: [{ propertyName: "hs_lastmodifieddate", direction: "ASCENDING" }],
-      properties: [
-        "name",
-        "domain",
-        "country",
-        "industry",
-        "description",
-        "annualrevenue",
-        "numberofemployees",
-        "hs_lead_status",
-      ],
-      limit,
-      after: offsetObject.after,
-    };
-
-    const searchResult = await requestHubspotWithRetry(async () => {
-      console.log("try companies.searchApi.doSearch");
-      return await hubspotClient.crm.companies.searchApi.doSearch(searchObject);
-    });
-
-    if (!searchResult)
-      throw new Error("Failed to fetch companies for the 4th time. Aborting.");
-
-    const data = searchResult.results || [];
-    offsetObject.after = parseInt(searchResult.paging?.next?.after);
-
-    console.log("fetch company batch");
-
-    data.forEach((company) => {
-      if (!company.properties) return;
-
-      const actionTemplate = {
-        includeInAnalytics: 0,
-        companyProperties: {
-          company_id: company.id,
-          company_domain: company.properties.domain,
-          company_industry: company.properties.industry,
-        },
+  await processHubSpotPaginatedData(
+    lastPulledDate,
+    async (lastModifiedDate, after) => {
+      const lastModifiedDateFilter = generateLastModifiedDateFilter(
+        lastModifiedDate,
+        now,
+        "hs_lastmodifieddate"
+      );
+      const searchObject = {
+        filterGroups: [lastModifiedDateFilter],
+        sorts: [
+          { propertyName: "hs_lastmodifieddate", direction: "ASCENDING" },
+        ],
+        properties: [
+          "name",
+          "domain",
+          "country",
+          "industry",
+          "description",
+          "annualrevenue",
+          "numberofemployees",
+          "hs_lead_status",
+        ],
+        limit,
+        after: after,
       };
 
-      const isCreated =
-        !lastPulledDate || new Date(company.createdAt) > lastPulledDate;
-
-      q.push({
-        actionName: isCreated ? "Company Created" : "Company Updated",
-        actionDate:
-          new Date(isCreated ? company.createdAt : company.updatedAt) - 2000,
-        ...actionTemplate,
+      const searchResult = await requestHubspotWithRetry(async () => {
+        console.log("try companies.searchApi.doSearch");
+        return await hubspotClient.crm.companies.searchApi.doSearch(
+          searchObject
+        );
       });
-    });
 
-    if (!offsetObject?.after) {
-      hasMore = false;
-      break;
-    } else if (offsetObject?.after >= 9900) {
-      offsetObject.after = 0;
-      offsetObject.lastModifiedDate = new Date(
-        data[data.length - 1].updatedAt
-      ).valueOf();
+      if (!searchResult)
+        throw new Error(
+          "Failed to fetch companies for the 4th time. Aborting."
+        );
+
+      const data = searchResult.results || [];
+
+      console.log("fetch company batch");
+
+      data.forEach((company) => {
+        if (!company.properties) return;
+
+        const actionTemplate = {
+          includeInAnalytics: 0,
+          companyProperties: {
+            company_id: company.id,
+            company_domain: company.properties.domain,
+            company_industry: company.properties.industry,
+          },
+        };
+
+        const isCreated =
+          !lastPulledDate || new Date(company.createdAt) > lastPulledDate;
+
+        q.push({
+          actionName: isCreated ? "Company Created" : "Company Updated",
+          actionDate:
+            new Date(isCreated ? company.createdAt : company.updatedAt) - 2000,
+          ...actionTemplate,
+        });
+      });
+
+      return searchResult;
     }
-  }
+  );
 
   account.lastPulledDates.companies = now;
   await saveDomain(domain);
@@ -186,124 +215,118 @@ const processContacts = async (domain, hubId, q) => {
   );
   const lastPulledDate = new Date(account.lastPulledDates.contacts);
   const now = new Date();
-
-  let hasMore = true;
-  const offsetObject = {};
   const limit = 100;
 
-  while (hasMore) {
-    const lastModifiedDate = offsetObject.lastModifiedDate || lastPulledDate;
-    const lastModifiedDateFilter = generateLastModifiedDateFilter(
-      lastModifiedDate,
-      now,
-      "lastmodifieddate"
-    );
-    const searchObject = {
-      filterGroups: [lastModifiedDateFilter],
-      sorts: [{ propertyName: "lastmodifieddate", direction: "ASCENDING" }],
-      properties: [
-        "firstname",
-        "lastname",
-        "jobtitle",
-        "email",
-        "hubspotscore",
-        "hs_lead_status",
-        "hs_analytics_source",
-        "hs_latest_source",
-      ],
-      limit,
-      after: offsetObject.after,
-    };
-
-    const searchResult = await requestHubspotWithRetry(async () => {
-      console.log("try contacts.searchApi.doSearch");
-      return await hubspotClient.crm.contacts.searchApi.doSearch(searchObject);
-    });
-
-    if (!searchResult)
-      throw new Error("Failed to fetch contacts for the 4th time. Aborting.");
-
-    const data = searchResult.results || [];
-
-    console.log("fetch contact batch");
-
-    offsetObject.after = parseInt(searchResult.paging?.next?.after);
-    const contactIds = data.map((contact) => contact.id);
-
-    // contact to company association
-    const contactsToAssociate = contactIds;
-    const companyAssociationsResults =
-      (
-        await (
-          await hubspotClient.apiRequest({
-            method: "post",
-            path: "/crm/v3/associations/CONTACTS/COMPANIES/batch/read",
-            body: {
-              inputs: contactsToAssociate.map((contactId) => ({
-                id: contactId,
-              })),
-            },
-          })
-        ).json()
-      )?.results || [];
-
-    const companyAssociations = Object.fromEntries(
-      companyAssociationsResults
-        .map((a) => {
-          if (a.from) {
-            contactsToAssociate.splice(
-              contactsToAssociate.indexOf(a.from.id),
-              1
-            );
-            return [a.from.id, a.to[0].id];
-          } else return false;
-        })
-        .filter((x) => x)
-    );
-
-    data.forEach((contact) => {
-      if (!contact.properties || !contact.properties.email) return;
-
-      const companyId = companyAssociations[contact.id];
-
-      const isCreated = new Date(contact.createdAt) > lastPulledDate;
-
-      const userProperties = {
-        company_id: companyId,
-        contact_name: (
-          (contact.properties.firstname || "") +
-          " " +
-          (contact.properties.lastname || "")
-        ).trim(),
-        contact_title: contact.properties.jobtitle,
-        contact_source: contact.properties.hs_analytics_source,
-        contact_status: contact.properties.hs_lead_status,
-        contact_score: parseInt(contact.properties.hubspotscore) || 0,
+  await processHubSpotPaginatedData(
+    lastPulledDate,
+    async (lastModifiedDate, after) => {
+      const lastModifiedDateFilter = generateLastModifiedDateFilter(
+        lastModifiedDate,
+        now,
+        "lastmodifieddate"
+      );
+      const searchObject = {
+        filterGroups: [lastModifiedDateFilter],
+        sorts: [{ propertyName: "lastmodifieddate", direction: "ASCENDING" }],
+        properties: [
+          "firstname",
+          "lastname",
+          "jobtitle",
+          "email",
+          "hubspotscore",
+          "hs_lead_status",
+          "hs_analytics_source",
+          "hs_latest_source",
+        ],
+        limit,
+        after: after,
       };
 
-      const actionTemplate = {
-        includeInAnalytics: 0,
-        identity: contact.properties.email,
-        userProperties: filterNullValuesFromObject(userProperties),
-      };
-
-      q.push({
-        actionName: isCreated ? "Contact Created" : "Contact Updated",
-        actionDate: new Date(isCreated ? contact.createdAt : contact.updatedAt),
-        ...actionTemplate,
+      const searchResult = await requestHubspotWithRetry(async () => {
+        console.log("try contacts.searchApi.doSearch");
+        return await hubspotClient.crm.contacts.searchApi.doSearch(
+          searchObject
+        );
       });
-    });
 
-    if (!offsetObject?.after) {
-      hasMore = false;
-      break;
-    } else if (offsetObject?.after >= 9900) {
-      offsetObject.after = 0;
-      offsetObject.lastModifiedDate = new Date(
-        data[data.length - 1].updatedAt
-      ).valueOf();
+      if (!searchResult)
+        throw new Error("Failed to fetch contacts for the 4th time. Aborting.");
+
+      const data = searchResult.results || [];
+
+      console.log("fetch contact batch");
+
+      const contactIds = data.map((contact) => contact.id);
+
+      // contact to company association
+      const contactsToAssociate = contactIds;
+      const companyAssociationsResults =
+        (
+          await (
+            await hubspotClient.apiRequest({
+              method: "post",
+              path: "/crm/v3/associations/CONTACTS/COMPANIES/batch/read",
+              body: {
+                inputs: contactsToAssociate.map((contactId) => ({
+                  id: contactId,
+                })),
+              },
+            })
+          ).json()
+        )?.results || [];
+
+      const companyAssociations = Object.fromEntries(
+        companyAssociationsResults
+          .map((a) => {
+            if (a.from) {
+              contactsToAssociate.splice(
+                contactsToAssociate.indexOf(a.from.id),
+                1
+              );
+              return [a.from.id, a.to[0].id];
+            } else return false;
+          })
+          .filter((x) => x)
+      );
+
+      data.forEach((contact) => {
+        if (!contact.properties || !contact.properties.email) return;
+
+        const companyId = companyAssociations[contact.id];
+
+        const isCreated = new Date(contact.createdAt) > lastPulledDate;
+
+        const userProperties = {
+          company_id: companyId,
+          contact_name: (
+            (contact.properties.firstname || "") +
+            " " +
+            (contact.properties.lastname || "")
+          ).trim(),
+          contact_title: contact.properties.jobtitle,
+          contact_source: contact.properties.hs_analytics_source,
+          contact_status: contact.properties.hs_lead_status,
+          contact_score: parseInt(contact.properties.hubspotscore) || 0,
+        };
+
+        const actionTemplate = {
+          includeInAnalytics: 0,
+          identity: contact.properties.email,
+          userProperties: filterNullValuesFromObject(userProperties),
+        };
+
+        q.push({
+          actionName: isCreated ? "Contact Created" : "Contact Updated",
+          actionDate: new Date(
+            isCreated ? contact.createdAt : contact.updatedAt
+          ),
+          ...actionTemplate,
+        });
+      });
+
+      return searchResult;
     }
-  }
+  );
 
   account.lastPulledDates.contacts = now;
   await saveDomain(domain);
