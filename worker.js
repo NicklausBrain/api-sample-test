@@ -388,7 +388,6 @@ const processMeetings = async (account, q) => {
 
       // Process each meeting to get associated contacts
       for (const meeting of meetings) {
-        console.log(`Processing a meeting`, { meeting });
         // Get contact associations for this meeting
         const contactAssociationsResult = await requestHubspotWithRetry(
           account,
@@ -407,7 +406,7 @@ const processMeetings = async (account, q) => {
           console.log("Skip meetings with no contacts");
           continue; // Skip meetings with no contacts
         } else {
-          console.log("contactAssociations", { contactAssociations });
+          console.log("contactAssociations.length", contactAssociations.length);
         }
 
         // Get details for associated contacts to get their emails
@@ -419,16 +418,14 @@ const processMeetings = async (account, q) => {
           account,
           async () => {
             console.log(`Get contact details for meeting ${meeting.id}`);
-            return await hubspotClient.apiRequest({
-              method: "post",
-              path: "/crm/v3/objects/contacts/batch/read",
-              body: {
-                properties: ["email"],
-                inputs: contactIds.map((id) => ({ id })),
-              },
+            return await hubspotClient.crm.contacts.batchApi.read({
+              properties: ["email"],
+              inputs: contactIds.map((id) => ({ id })),
             });
           }
         );
+
+        console.log("contactsDetailsResult)", { contactsDetailsResult });
 
         const contactsDetails = contactsDetailsResult?.results || [];
 
@@ -519,8 +516,8 @@ const pullDataFromHubspot = async () => {
 
     try {
       console.log("start process contacts");
-      // await processContacts(account, q);
-      // await saveDomain(domain); // todo: mb can be done after all processing
+      await processContacts(account, q);
+      await saveDomain(domain); // todo: mb can be done after all processing
       console.log("process contacts - done");
     } catch (err) {
       console.log(err, {
@@ -531,8 +528,8 @@ const pullDataFromHubspot = async () => {
 
     try {
       console.log("start process companies");
-      // await processCompanies(account, q);
-      // await saveDomain(domain); // todo: mb can be done after all processing
+      await processCompanies(account, q);
+      await saveDomain(domain); // todo: mb can be done after all processing
       console.log("process companies - done");
     } catch (err) {
       console.log(err, {
